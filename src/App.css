@@ -122,12 +122,40 @@ h2 {
   padding: 8px 12px;
   font-weight: 600;
   transition: all 0.15s ease;
+  cursor: grab;
+}
+
+.player-chip.dragging {
+  opacity: 0.5;
+  background: #f1f5f9;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+
+.player-chip:active {
+  cursor: grabbing;
 }
 
 .player-chip.selected {
   background: #0f172a;
   color: #f8fafc;
   border-color: #0f172a;
+}
+
+.player-chip.selected:hover:not(.dragging) {
+  opacity: 0.85;
+}
+
+.player-chip.add-button {
+  background: #f0fdf4;
+  border-color: #86efac;
+  color: #166534;
+  cursor: pointer;
+}
+
+.player-chip.add-button:hover {
+  background: #dcfce7;
+  border-color: #4ade80;
 }
 
 .player-select-button {
@@ -150,6 +178,12 @@ h2 {
   background: rgba(148, 163, 184, 0.2);
   color: inherit;
   font-size: 0.7rem;
+}
+
+.unselected-players {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e2e8f0;
 }
 
 .primary-button,
@@ -447,4 +481,77 @@ h2 {
   .player-name {
     margin-bottom: 4px;
   }
+}
+/* Home screen */
+.home-buttons {
+  display: grid;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.home-buttons button {
+  width: 100%;
+}
+
+/* Game history screen */
+.games-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.game-row {
+  background: #f8fafc;
+  border: 1px solid #dbe4f0;
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.game-info {
+  display: grid;
+  gap: 8px;
+}
+
+.game-date {
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
+.game-scores {
+  display: grid;
+  gap: 6px;
+  font-size: 0.9rem;
+}
+
+.game-scores span {
+  display: flex;
+  justify-content: space-between;
+}
+
+.game-winner {
+  font-size: 0.9rem;
+  color: #059669;
+  font-weight: 500;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid #dbe4f0;
+}
+
+/* Leaderboard enhancement */
+.leaderboard-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.leaderboard-player {
+  display: grid;
+  gap: 4px;
+}
+
+.game-count {
+  font-size: 0.75rem;
+  color: #64748b;
+  font-weight: 400;
 }

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import './App.css';
 import { buildDealingDotLayout, useGame } from './hooks/useGame';
-import { fetchLeaderboard, fetchPlayers, saveGame } from './lib/gameService';
+import { fetchGames, fetchLeaderboard, fetchPlayers, saveGame } from './lib/gameService';
 import {
   calcPoints,
   generateForcedBidSet,
@@ -10,7 +10,7 @@ import {
   getWinner,
   type Round,
 } from './lib/scoring';
-import type { LeaderboardRow, Player } from './types';
+import type { LeaderboardRow, Player, SavedGameRecord } from './types';
 
 const DEFAULT_PLAYERS = [
   'Keanu',
@@ -22,21 +22,22 @@ const DEFAULT_PLAYERS = [
   'Sean',
 ];
 
-const PASSCODE_KEY = 'dealing-dot:passcode';
+// passcode removed — saves no longer require a group passcode
 const normalizePlayerName = (name: string) => name.trim().toLowerCase();
 
-type Screen = 'setup' | 'game' | 'summary' | 'history';
+type Screen = 'home' | 'setup' | 'game' | 'summary' | 'history' | 'games';
 
 function App() {
   const { game, startGame, addRound, undoLastRound, resetGame } = useGame();
-  const [screen, setScreen] = useState<Screen>('setup');
+  const [screen, setScreen] = useState<Screen>('home');
   const [selectedPlayers, setSelectedPlayers] = useState<string[]>(DEFAULT_PLAYERS);
   const [highestRound, setHighestRound] = useState<number>(7);
   const [draftBids, setDraftBids] = useState<Record<string, number>>({});
   const [draftTricks, setDraftTricks] = useState<Record<string, number>>({});
   const [players, setPlayers] = useState<Player[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardRow[]>([]);
-  const [passcode, setPasscode] = useState<string>(() => window.localStorage.getItem(PASSCODE_KEY) ?? '');
+  const [games, setGames] = useState<SavedGameRecord[]>([]);
+  // passcode state removed
   const [saveError, setSaveError] = useState<string | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -67,13 +68,22 @@ function App() {
       }
     };
 
+    const loadGames = async () => {
+      try {
+        const rows = await fetchGames();
+        setGames(rows);
+      } catch (error) {
+        console.warn('Unable to load games.', error);
+        setGames([]);
+      }
+    };
+
     void loadPlayers();
     void loadLeaderboard();
+    void loadGames();
   }, []);
 
-  useEffect(() => {
-    window.localStorage.setItem(PASSCODE_KEY, passcode);
-  }, [passcode]);
+  // no passcode persistence
 
   const roundTemplates = useMemo(() => {
     if (!game) {
@@ -117,7 +127,7 @@ function App() {
 
   useEffect(() => {
     if (!game) {
-      setScreen((currentScreen) => (currentScreen === 'history' ? 'history' : 'setup'));
+      setScreen((currentScreen) => (currentScreen === 'history' || currentScreen === 'games' || currentScreen === 'home' ? currentScreen : 'home'));
       return;
     }
 
@@ -262,34 +272,23 @@ function App() {
     if (!game) {
       return;
     }
-
     const resolvedPlayerIds = game.playerIds.map(resolvePlayerId);
-    const invalidIds = resolvedPlayerIds.filter((playerId) => !isValidUuid(playerId));
-
-    if (invalidIds.length > 0) {
-      setSaveError('Player IDs are invalid for this save. Re-select players from the database or re-load the app.');
-      return;
-    }
 
     const playerScores = game.playerIds.map((playerId, index) => ({
       player_id: resolvedPlayerIds[index],
       score: totals[playerId] ?? 0,
     }));
-
-    if (!passcode.trim()) {
-      setSaveError('Please enter the group passcode before saving.');
-      return;
-    }
-
     setIsSaving(true);
     setSaveError(null);
 
     try {
-      await saveGame(passcode.trim(), new Date().toISOString(), playerScores);
+      await saveGame(new Date().toISOString(), playerScores);
       resetGame();
-      setScreen('history');
+      setScreen('home');
       const rows = await fetchLeaderboard();
       setLeaderboard(rows);
+      const gameRows = await fetchGames();
+      setGames(gameRows);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to save the game.';
       setSaveError(message);
@@ -301,8 +300,15 @@ function App() {
   const renderSetup = () => (
     <main className="app-shell setup-screen">
       <div className="panel">
-        <p className="eyebrow">Nomo scorer</p>
-        <h1>New game</h1>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+          <div>
+            <p className="eyebrow">Nomo scorer</p>
+            <h1>New game</h1>
+          </div>
+          <button type="button" className="secondary-button" onClick={() => setScreen('home')}>
+            Back
+          </button>
+        </div>
 
         <div className="field-block">
           <label htmlFor="highest-round">Highest round</label>
@@ -317,41 +323,58 @@ function App() {
         </div>
 
         <div className="field-block">
-          <label>Players in this game</label>
+          <label>Players in this game (drag to reorder)</label>
           <div className="player-list">
-            {DEFAULT_PLAYERS.map((playerName) => {
-              const index = orderedPlayerNames.indexOf(playerName);
-              return (
-                <div
-                  key={playerName}
-                  draggable
-                  onDragStart={() => setDraggedPlayer(playerName)}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={() => {
-                    if (!draggedPlayer) {
-                      return;
-                    }
+            {orderedPlayerNames.map((playerName) => (
+              <div
+                key={playerName}
+                draggable
+                onDragStart={() => setDraggedPlayer(playerName)}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={() => {
+                  if (!draggedPlayer) {
+                    return;
+                  }
 
-                    const fromIndex = orderedPlayerNames.indexOf(draggedPlayer);
-                    const toIndex = orderedPlayerNames.indexOf(playerName);
-                    if (fromIndex >= 0 && toIndex >= 0 && fromIndex !== toIndex) {
-                      movePlayer(fromIndex, toIndex);
-                    }
-                  }}
-                  className={selectedPlayers.includes(playerName) ? 'player-chip selected' : 'player-chip'}
+                  const fromIndex = orderedPlayerNames.indexOf(draggedPlayer);
+                  const toIndex = orderedPlayerNames.indexOf(playerName);
+                  if (fromIndex >= 0 && toIndex >= 0 && fromIndex !== toIndex) {
+                    movePlayer(fromIndex, toIndex);
+                  }
+                }}
+                className={`player-chip selected ${draggedPlayer === playerName ? 'dragging' : ''}`}
+              >
+                <button
+                  type="button"
+                  className="player-select-button"
+                  onClick={() => togglePlayer(playerName)}
                 >
-                  <button
-                    type="button"
-                    className="player-select-button"
-                    onClick={() => togglePlayer(playerName)}
-                  >
-                    {playerName}
-                  </button>
-                  {index >= 0 ? <span className="player-order-index">{index + 1}</span> : null}
-                </div>
-              );
-            })}
+                  {playerName}
+                </button>
+                <span className="player-order-index">{orderedPlayerNames.indexOf(playerName) + 1}</span>
+              </div>
+            ))}
           </div>
+          
+          {DEFAULT_PLAYERS.length > orderedPlayerNames.length && (
+            <div className="unselected-players">
+              <p style={{ fontSize: '0.875rem', color: '#64748b', marginBottom: '8px' }}>Click to add player:</p>
+              <div className="player-list">
+                {DEFAULT_PLAYERS.filter((name) => !orderedPlayerNames.includes(name)).map(
+                  (playerName) => (
+                    <button
+                      key={playerName}
+                      type="button"
+                      className="player-chip add-button"
+                      onClick={() => togglePlayer(playerName)}
+                    >
+                      + {playerName}
+                    </button>
+                  ),
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {startError ? <p className="save-error">{startError}</p> : null}
@@ -519,21 +542,99 @@ function App() {
             ))}
           </div>
 
-          {winner ? <p className="winner-banner">Winner: {winner}</p> : null}
+          {winner ? <p className="winner-banner">Winner: {playerNameById[winner] ?? winner}</p> : null}
 
           <div className="save-box">
-            <label htmlFor="passcode">Group passcode</label>
-            <input
-              id="passcode"
-              type="password"
-              placeholder="Enter passcode"
-              value={passcode}
-              onChange={(event) => setPasscode(event.target.value)}
-            />
             {saveError ? <p className="save-error">{saveError}</p> : null}
             <button type="button" className="primary-button" onClick={() => void handleSaveGame()} disabled={isSaving}>
               {isSaving ? 'Saving...' : 'Save game'}
             </button>
+          </div>
+        </div>
+      </main>
+    );
+  };
+
+  const renderHome = () => (
+    <main className="app-shell home-screen">
+      <div className="panel">
+        <p className="eyebrow">Nomo scorer</p>
+        <h1>Home</h1>
+
+        <div className="home-buttons">
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => setScreen('setup')}
+          >
+            + New game
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => setScreen('history')}
+          >
+            View leaderboard
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => setScreen('games')}
+          >
+            View game history
+          </button>
+        </div>
+      </div>
+    </main>
+  );
+
+  const renderGameHistory = () => {
+    const gameCount = games.length;
+
+    return (
+      <main className="app-shell games-screen">
+        <div className="panel">
+          <div className="scoreboard-head">
+            <div>
+              <p className="eyebrow">Games</p>
+              <h1>Game history</h1>
+            </div>
+            <button type="button" className="secondary-button" onClick={() => setScreen('home')}>
+              Home
+            </button>
+          </div>
+
+          <div className="games-list">
+            {games.length === 0 ? (
+              <p className="empty-state">No games saved yet.</p>
+            ) : (
+              games.map((savedGame, index) => {
+                const gameDate = new Date(savedGame.played_at);
+                const dateStr = gameDate.toLocaleDateString('en-GB');
+                const timeStr = gameDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+                const gameNumber = gameCount - index;
+                const winner = savedGame.scores.length > 0
+                  ? savedGame.scores.reduce((max, curr) => (curr.score > max.score ? curr : max))
+                  : null;
+
+                return (
+                  <div key={savedGame.id} className="game-row">
+                    <div className="game-info">
+                      <div><strong>Game #{gameNumber}</strong></div>
+                      <div className="game-date">{dateStr} at {timeStr}</div>
+                      <div className="game-scores">
+                        {savedGame.scores.map((score) => (
+                          <span key={score.player_id}>
+                            {score.name}: <strong>{score.score}</strong>
+                          </span>
+                        ))}
+                      </div>
+                      {winner ? <div className="game-winner">Winner: {winner.name}</div> : null}
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       </main>
@@ -548,8 +649,8 @@ function App() {
             <p className="eyebrow">League</p>
             <h1>Leaderboard</h1>
           </div>
-          <button type="button" className="secondary-button" onClick={() => setScreen('setup')}>
-            New game
+          <button type="button" className="secondary-button" onClick={() => setScreen('home')}>
+            Home
           </button>
         </div>
 
@@ -559,7 +660,10 @@ function App() {
           ) : (
             leaderboard.map((row, index) => (
               <div key={`${row.name}-${index}`} className="leaderboard-row">
-                <span>{index + 1}. {row.name}</span>
+                <div className="leaderboard-player">
+                  <span>{index + 1}. {row.name}</span>
+                  <span className="game-count">{row.games} {row.games === 1 ? 'game' : 'games'}</span>
+                </div>
                 <strong>{row.avg_score.toFixed(2)}</strong>
               </div>
             ))
@@ -568,6 +672,10 @@ function App() {
       </div>
     </main>
   );
+
+  if (screen === 'home') {
+    return renderHome();
+  }
 
   if (screen === 'setup') {
     return renderSetup();
@@ -579,6 +687,10 @@ function App() {
 
   if (screen === 'summary') {
     return renderSummary();
+  }
+
+  if (screen === 'games') {
+    return renderGameHistory();
   }
 
   return renderHistory();

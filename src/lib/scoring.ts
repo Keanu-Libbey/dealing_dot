@@ -84,25 +84,30 @@ export function generateForcedBidSet(
     playerIds.map((playerId) => [playerId, 0]),
   );
 
-  const remaining = [...playerIds];
+  const order = [...playerIds];
   let remainingTotal = targetTotal;
 
-  while (remaining.length > 0) {
-    const playerId = remaining.shift();
-
-    if (!playerId) {
-      break;
-    }
-
+  for (let index = 0; index < order.length; index += 1) {
+    const playerId = order[index];
+    const remainingPlayers = order.length - index - 1;
     const minForPlayer = Math.max(
       0,
-      remainingTotal - (remaining.length * maxBid),
+      remainingTotal - remainingPlayers * maxBid,
     );
-    const maxForPlayer = Math.min(maxBid, remainingTotal);
+    const maxForPlayer = Math.min(
+      maxBid,
+      remainingTotal,
+    );
 
-    const bid =
-      minForPlayer +
-      Math.floor(Math.random() * (maxForPlayer - minForPlayer + 1));
+    let bid = minForPlayer;
+    if (maxForPlayer > minForPlayer) {
+      const spread = maxForPlayer - minForPlayer + 1;
+      const bias = index % 2 === 0 ? 0.5 : 0.25;
+      bid = minForPlayer + Math.floor((Math.random() + bias) * spread);
+      if (bid > maxForPlayer) {
+        bid = maxForPlayer;
+      }
+    }
 
     bids[playerId] = bid;
     remainingTotal -= bid;

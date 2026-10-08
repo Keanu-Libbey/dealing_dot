@@ -21,6 +21,7 @@ const DEFAULT_PLAYERS = [
   'Suzie',
   'Sean',
 ];
+const HIGHEST_ROUND_OPTIONS = [6, 7, 8, 9] as const;
 
 // passcode removed — saves no longer require a group passcode
 const normalizePlayerName = (name: string) => name.trim().toLowerCase();
@@ -192,28 +193,54 @@ function App() {
     });
   };
 
-  const handleBidChange = (playerId: string, value: number) => {
-    const maxBid =
-      currentRoundTemplate?.roundType === 'normal' || currentRoundTemplate?.roundType === 'nt'
+  const clampValue = (value: number, min: number, max: number) => {
+    if (!Number.isFinite(value)) {
+      return min;
+    }
+
+    return Math.max(min, Math.min(max, Math.trunc(value)));
+  };
+
+  const getCurrentRoundLimits = () => {
+    if (!currentRoundTemplate) {
+      return { bidMax: 0, trickMax: 0 };
+    }
+
+    const bidMax =
+      currentRoundTemplate.roundType === 'normal' || currentRoundTemplate.roundType === 'nt'
         ? currentRoundTemplate.cardCount
         : 3;
 
-    const nextValue = Number.isFinite(value) ? Math.trunc(value) : 0;
-
-    setDraftBids((current) => ({
-      ...current,
-      [playerId]: Math.max(0, Math.min(maxBid, nextValue)),
-    }));
+    return {
+      bidMax,
+      trickMax: currentRoundTemplate.cardCount,
+    };
   };
 
-  const handleTrickChange = (playerId: string, value: number) => {
-    const maxTricks = currentRoundTemplate?.cardCount ?? 0;
-    const nextValue = Number.isFinite(value) ? Math.trunc(value) : 0;
+  const handleInlineRoundEntry = (playerId: string, rawValue: string) => {
+    const value = rawValue.trim();
+    if (!value) {
+      setDraftBids((current) => ({ ...current, [playerId]: 0 }));
+      setDraftTricks((current) => ({ ...current, [playerId]: 0 }));
+      return;
+    }
 
-    setDraftTricks((current) => ({
-      ...current,
-      [playerId]: Math.max(0, Math.min(maxTricks, nextValue)),
-    }));
+    const [leftPart, rightPart] = value.split('-');
+    const parsedLeft = Number.parseInt(leftPart ?? '0', 10);
+    const parsedRight = rightPart !== undefined ? Number.parseInt(rightPart, 10) : undefined;
+    const { bidMax, trickMax } = getCurrentRoundLimits();
+
+    const nextBid = currentRoundTemplate?.roundType === 'misery' ? 0 : clampValue(Number.isFinite(parsedLeft) ? parsedLeft : 0, 0, bidMax);
+    const nextTricks = clampValue(Number.isFinite(parsedRight ?? Number.NaN) ? Number(parsedRight ?? 0) : Number(leftPart ?? 0), 0, trickMax);
+
+    setDraftBids((current) => ({ ...current, [playerId]: nextBid }));
+    setDraftTricks((current) => ({ ...current, [playerId]: nextTricks }));
+  };
+
+  const formatRoundInputValue = (playerId: string) => {
+    const bid = draftBids[playerId] ?? 0;
+    const tricks = draftTricks[playerId] ?? 0;
+    return `${bid}-${tricks}`;
   };
 
   const isValidUuid = (value: string) =>
@@ -311,21 +338,25 @@ function App() {
         </div>
 
         <div className="field-block">
-          <label htmlFor="highest-round">Highest round</label>
-          <input
-            id="highest-round"
-            type="number"
-            min={1}
-            max={12}
-            value={highestRound}
-            onChange={(event) => setHighestRound(Math.max(1, Number(event.target.value) || 1))}
-          />
+          <label>Highest round</label>
+          <div className="option-pills" role="group" aria-label="Highest round selection">
+            {HIGHEST_ROUND_OPTIONS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                className={option === highestRound ? 'option-pill active' : 'option-pill'}
+                onClick={() => setHighestRound(option)}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="field-block">
-          <label>Players in this game (drag to reorder)</label>
-          <div className="player-list">
-            {orderedPlayerNames.map((playerName) => (
+          <label>Players in this game (drag or tap to reorder)</label>
+          <div className="player-list vertical">
+            {orderedPlayerNames.map((playerName, index) => (
               <div
                 key={playerName}
                 draggable
@@ -344,6 +375,7 @@ function App() {
                 }}
                 className={`player-chip selected ${draggedPlayer === playerName ? 'dragging' : ''}`}
               >
+                <span className="player-order-index">{index + 1}</span>
                 <button
                   type="button"
                   className="player-select-button"
@@ -351,11 +383,18 @@ function App() {
                 >
                   {playerName}
                 </button>
-                <span className="player-order-index">{orderedPlayerNames.indexOf(playerName) + 1}</span>
+                <div className="player-order-actions" aria-label={`Move ${playerName}`}>
+                  <button type="button" onClick={() => movePlayer(index, Math.max(0, index - 1))} aria-label={`Move ${playerName} up`}>
+                    ↑
+                  </button>
+                  <button type="button" onClick={() => movePlayer(index, Math.min(orderedPlayerNames.length - 1, index + 1))} aria-label={`Move ${playerName} down`}>
+                    ↓
+                  </button>
+                </div>
               </div>
             ))}
           </div>
-          
+
           {DEFAULT_PLAYERS.length > orderedPlayerNames.length && (
             <div className="unselected-players">
               <p style={{ fontSize: '0.875rem', color: '#64748b', marginBottom: '8px' }}>Click to add player:</p>
@@ -461,44 +500,29 @@ function App() {
           </div>
 
           <div className="round-form">
-            {game.playerIds.map((playerId) => (
-              <div key={playerId} className="player-round-row">
-                <div className="player-name">{playerNameById[playerId] ?? playerId}</div>
-                <label>
-                  Bid
-                  <input
-                    type="number"
-                    min={0}
-                    step={1}
-                    inputMode="numeric"
-                    max={
-                      currentRoundTemplate.roundType === 'normal' || currentRoundTemplate.roundType === 'nt'
-                        ? currentRoundTemplate.cardCount
-                        : 3
-                    }
-                    value={draftBids[playerId] ?? 0}
-                    onChange={(event) => handleBidChange(playerId, Number(event.target.value))}
-                    disabled={
-                      currentRoundTemplate.roundType === 'fbu' ||
-                      currentRoundTemplate.roundType === 'fbo' ||
-                      currentRoundTemplate.roundType === 'misery'
-                    }
-                  />
-                </label>
-                <label>
-                  Tricks
-                  <input
-                    type="number"
-                    min={0}
-                    step={1}
-                    inputMode="numeric"
-                    max={currentRoundTemplate.cardCount}
-                    value={draftTricks[playerId] ?? 0}
-                    onChange={(event) => handleTrickChange(playerId, Number(event.target.value))}
-                  />
-                </label>
-              </div>
-            ))}
+            {game.playerIds.map((playerId) => {
+              const isForcedRound =
+                currentRoundTemplate.roundType === 'fbu' ||
+                currentRoundTemplate.roundType === 'fbo' ||
+                currentRoundTemplate.roundType === 'misery';
+
+              return (
+                <div key={playerId} className="player-round-row">
+                  <div className="player-name">{playerNameById[playerId] ?? playerId}</div>
+                  <label>
+                    <span>Bid / Tricks</span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={formatRoundInputValue(playerId)}
+                      onChange={(event) => handleInlineRoundEntry(playerId, event.target.value)}
+                      readOnly={isForcedRound}
+                      aria-label={`${playerNameById[playerId] ?? playerId} bid and tricks`}
+                    />
+                  </label>
+                </div>
+              );
+            })}
           </div>
 
           <button type="button" className="primary-button" onClick={handleConfirmRound}>

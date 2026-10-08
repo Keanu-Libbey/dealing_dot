@@ -105,9 +105,37 @@ h2 {
   color: #0f172a;
 }
 
+.option-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.option-pill {
+  min-width: 64px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #0f172a;
+  padding: 10px 14px;
+  border-radius: 999px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.option-pill.active {
+  background: #0f172a;
+  color: #fff;
+  border-color: #0f172a;
+}
+
 .player-list {
   display: flex;
   flex-wrap: wrap;
+  gap: 10px;
+}
+
+.player-list.vertical {
+  display: grid;
   gap: 10px;
 }
 
@@ -166,6 +194,8 @@ h2 {
   font-weight: 700;
   padding: 0;
   cursor: pointer;
+  flex: 1;
+  text-align: left;
 }
 
 .player-order-index {
@@ -178,6 +208,23 @@ h2 {
   background: rgba(148, 163, 184, 0.2);
   color: inherit;
   font-size: 0.7rem;
+}
+
+.player-order-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.player-order-actions button {
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  border-radius: 8px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  cursor: pointer;
 }
 
 .unselected-players {
@@ -482,7 +529,7 @@ h2 {
     margin-bottom: 4px;
   }
 }
-/* Home screen */
+
 .home-buttons {
   display: grid;
   gap: 12px;
@@ -493,7 +540,6 @@ h2 {
   width: 100%;
 }
 
-/* Game history screen */
 .games-list {
   display: grid;
   gap: 12px;
@@ -537,7 +583,6 @@ h2 {
   border-top: 1px solid #dbe4f0;
 }
 
-/* Leaderboard enhancement */
 .leaderboard-row {
   display: grid;
   grid-template-columns: 1fr auto;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import './App.css';
 import { buildDealingDotLayout, useGame } from './hooks/useGame';
@@ -43,6 +43,11 @@ function App() {
   const [startError, setStartError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [draggedPlayer, setDraggedPlayer] = useState<string | null>(null);
+  const [bidMenuCell, setBidMenuCell] = useState<string | null>(null);
+  const [tricksInputCell, setTricksInputCell] = useState<string | null>(null);
+  const [tricksInputValue, setTricksInputValue] = useState<string>('');
+  const longPressTimer = useRef<number | null>(null);
+  const longPressTriggeredRef = useRef(false);
 
   useEffect(() => {
     const loadPlayers = async () => {
@@ -217,30 +222,94 @@ function App() {
     };
   };
 
-  const handleInlineRoundEntry = (playerId: string, rawValue: string) => {
-    const value = rawValue.trim();
-    if (!value) {
-      setDraftBids((current) => ({ ...current, [playerId]: 0 }));
-      setDraftTricks((current) => ({ ...current, [playerId]: 0 }));
+  const getCellKey = (playerId: string, roundIndex: number) => `${playerId}-${roundIndex}`;
+
+  const clearLongPressTimer = () => {
+    if (longPressTimer.current) {
+      window.clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+
+  const handleBidSelect = (cellKey: string, bid: number) => {
+    const [playerId] = cellKey.split('-');
+    const maxBid = getCurrentRoundLimits().bidMax;
+
+    setDraftBids((current) => ({
+      ...current,
+      [playerId]: clampValue(bid, 0, maxBid),
+    }));
+    setBidMenuCell(null);
+  };
+
+  const handleTricksSubmit = (cellKey: string, result: number) => {
+    const [playerId] = cellKey.split('-');
+    const { trickMax } = getCurrentRoundLimits();
+    const nextTricks = clampValue(result, 0, trickMax);
+
+    setDraftTricks((current) => ({
+      ...current,
+      [playerId]: nextTricks,
+    }));
+    setTricksInputCell(null);
+    setTricksInputValue('');
+  };
+
+  const handleCellTap = (playerId: string, roundIndex: number) => {
+    if (!currentRoundTemplate) {
       return;
     }
 
-    const [leftPart, rightPart] = value.split('-');
-    const parsedLeft = Number.parseInt(leftPart ?? '0', 10);
-    const parsedRight = rightPart !== undefined ? Number.parseInt(rightPart, 10) : undefined;
-    const { bidMax, trickMax } = getCurrentRoundLimits();
+    if (longPressTriggeredRef.current) {
+      longPressTriggeredRef.current = false;
+      return;
+    }
 
-    const nextBid = currentRoundTemplate?.roundType === 'misery' ? 0 : clampValue(Number.isFinite(parsedLeft) ? parsedLeft : 0, 0, bidMax);
-    const nextTricks = clampValue(Number.isFinite(parsedRight ?? Number.NaN) ? Number(parsedRight ?? 0) : Number(leftPart ?? 0), 0, trickMax);
-
-    setDraftBids((current) => ({ ...current, [playerId]: nextBid }));
-    setDraftTricks((current) => ({ ...current, [playerId]: nextTricks }));
-  };
-
-  const formatRoundInputValue = (playerId: string) => {
+    const cellKey = getCellKey(playerId, roundIndex);
     const bid = draftBids[playerId] ?? 0;
     const tricks = draftTricks[playerId] ?? 0;
-    return `${bid}-${tricks}`;
+
+    if (bid === 0) {
+      setBidMenuCell(cellKey);
+      return;
+    }
+
+    if (tricks === 0) {
+      setTricksInputCell(cellKey);
+      setTricksInputValue('');
+      return;
+    }
+
+    setTricksInputCell(cellKey);
+    setTricksInputValue(String(tricks));
+  };
+
+  const handleCellLongPressStart = (playerId: string) => {
+    if (!currentRoundTemplate) {
+      return;
+    }
+
+    const bid = draftBids[playerId] ?? 0;
+    if (bid === 0) {
+      return;
+    }
+
+    clearLongPressTimer();
+    longPressTimer.current = window.setTimeout(() => {
+      setDraftTricks((current) => ({
+        ...current,
+        [playerId]: bid,
+      }));
+      longPressTriggeredRef.current = true;
+      setBidMenuCell(null);
+      setTricksInputCell(null);
+      setTricksInputValue('');
+      clearLongPressTimer();
+    }, 1500);
+  };
+
+  const handleCellLongPressEnd = () => {
+    clearLongPressTimer();
   };
 
   const isValidUuid = (value: string) =>
@@ -479,18 +548,45 @@ function App() {
                   </div>
 
                   {game.playerIds.map((playerId, playerColumnIndex) => {
-                    const bid = previousRound?.bids[playerId] ?? 0;
-                    const tricks = previousRound?.tricks[playerId] ?? 0;
+                    let bid = previousRound?.bids[playerId] ?? 0;
+                    let tricks = previousRound?.tricks[playerId] ?? 0;
+
+                    if (isCurrentRound) {
+                      bid = draftBids[playerId] ?? 0;
+                      tricks = draftTricks[playerId] ?? 0;
+                    }
+
                     const points = previousRound ? calcPoints(bid, tricks, row.roundType) : 0;
-                    const displayValue = previousRound ? `${bid}-${points}` : '-';
                     const isDealerCell = playerColumnIndex === dealerIndex;
+                    const cellKey = `${playerId}-${index}`;
+
+                    let displayValue: string;
+                    if (isCurrentRound) {
+                      displayValue = bid > 0 ? `${bid}-` : '-';
+                      if (tricks > 0) {
+                        displayValue = `${bid}-${tricks}`;
+                      }
+                    } else if (previousRound) {
+                      displayValue = `${bid}-${points}`;
+                    } else {
+                      displayValue = '-';
+                    }
 
                     return (
                       <div
-                        key={`${playerId}-${index}`}
-                        className={isDealerCell ? 'score-table-cell dealer-highlight' : 'score-table-cell'}
+                        key={cellKey}
+                        className={`score-table-cell ${isDealerCell ? 'dealer-highlight' : ''} ${isCurrentRound ? 'cell-editable' : ''}`}
+                        onTouchStart={() => isCurrentRound && handleCellLongPressStart(playerId)}
+                        onTouchEnd={handleCellLongPressEnd}
+                        onMouseDown={() => isCurrentRound && handleCellLongPressStart(playerId)}
+                        onMouseUp={handleCellLongPressEnd}
+                        onClick={() => isCurrentRound && handleCellTap(playerId, index)}
                       >
-                        {previousRound ? <strong>{displayValue}</strong> : <span className="empty-cell">-</span>}
+                        {previousRound || tricks > 0 ? (
+                          <strong>{displayValue}</strong>
+                        ) : (
+                          <span>{displayValue}</span>
+                        )}
                       </div>
                     );
                   })}
@@ -499,31 +595,58 @@ function App() {
             })}
           </div>
 
-          <div className="round-form">
-            {game.playerIds.map((playerId) => {
-              const isForcedRound =
-                currentRoundTemplate.roundType === 'fbu' ||
-                currentRoundTemplate.roundType === 'fbo' ||
-                currentRoundTemplate.roundType === 'misery';
-
-              return (
-                <div key={playerId} className="player-round-row">
-                  <div className="player-name">{playerNameById[playerId] ?? playerId}</div>
-                  <label>
-                    <span>Bid / Tricks</span>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={formatRoundInputValue(playerId)}
-                      onChange={(event) => handleInlineRoundEntry(playerId, event.target.value)}
-                      readOnly={isForcedRound}
-                      aria-label={`${playerNameById[playerId] ?? playerId} bid and tricks`}
-                    />
-                  </label>
+          {bidMenuCell && currentRoundTemplate && (
+            <div className="cell-modal-overlay" onClick={() => setBidMenuCell(null)}>
+              <div className="cell-modal" onClick={(e) => e.stopPropagation()}>
+                <p className="cell-modal-title">Select bid (0–{currentRoundTemplate.cardCount})</p>
+                <div className="bid-menu">
+                  {Array.from({ length: currentRoundTemplate.cardCount + 1 }, (_, i) => i).map(
+                    (bidOption) => (
+                      <button
+                        key={bidOption}
+                        type="button"
+                        className="bid-option"
+                        onClick={() => handleBidSelect(bidMenuCell, bidOption)}
+                      >
+                        {bidOption}
+                      </button>
+                    ),
+                  )}
                 </div>
-              );
-            })}
-          </div>
+              </div>
+            </div>
+          )}
+
+          {tricksInputCell && currentRoundTemplate && (
+            <div className="cell-modal-overlay" onClick={() => setTricksInputCell(null)}>
+              <div className="cell-modal tricks-modal" onClick={(e) => e.stopPropagation()}>
+                <p className="cell-modal-title">Enter tricks won (0–{currentRoundTemplate.cardCount})</p>
+                <div className="tricks-input-group">
+                  <input
+                    type="number"
+                    min={0}
+                    max={currentRoundTemplate.cardCount}
+                    inputMode="numeric"
+                    value={tricksInputValue}
+                    onChange={(e) => setTricksInputValue(e.target.value)}
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={() => {
+                      const val = Number.parseInt(tricksInputValue, 10);
+                      if (Number.isFinite(val)) {
+                        handleTricksSubmit(tricksInputCell, val);
+                      }
+                    }}
+                  >
+                    Confirm
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <button type="button" className="primary-button" onClick={handleConfirmRound}>
             Confirm round

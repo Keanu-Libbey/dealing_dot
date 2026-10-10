@@ -70,6 +70,33 @@ export function generateForcedBidSet(
   cardCount: number,
   roundType: 'fbu' | 'fbo',
 ): Record<string, number> {
+  const predefinedKey = `${playerIds.length}:${cardCount}:${roundType}`;
+  const predefinedBids: Record<string, number[]> = {
+    '5:9:fbu': [0, 1, 2, 2, 3],
+    '5:9:fbo': [1, 2, 2, 2, 3],
+    '6:8:fbu': [0, 1, 1, 1, 2, 2],
+    '6:8:fbo': [0, 1, 1, 2, 2, 3],
+    '7:7:fbu': [0, 0, 1, 1, 1, 1, 2],
+    '7:7:fbo': [0, 0, 1, 1, 1, 2, 3],
+  };
+
+  const shuffle = (values: number[]) => {
+    const next = [...values];
+    for (let index = next.length - 1; index > 0; index -= 1) {
+      const swapIndex = Math.floor(Math.random() * (index + 1));
+      [next[index], next[swapIndex]] = [next[swapIndex], next[index]];
+    }
+    return next;
+  };
+
+  const predefined = predefinedBids[predefinedKey];
+  if (predefined) {
+    const shuffled = shuffle(predefined);
+    return Object.fromEntries(
+      playerIds.map((playerId, index) => [playerId, shuffled[index]]),
+    );
+  }
+
   const maxBid = 3;
   const targetTotal = roundType === 'fbu' ? cardCount - 1 : cardCount + 1;
   const totalPlayerCount = playerIds.length;

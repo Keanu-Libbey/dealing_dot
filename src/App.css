@@ -336,6 +336,17 @@ h2 {
   font-weight: 600;
 }
 
+.status-toast {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #86efac;
+  background: #f0fdf4;
+  color: #166534;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
 .score-table {
   display: grid;
   gap: 8px;
@@ -401,6 +412,21 @@ h2 {
   color: #0f172a;
 }
 
+.round-confirm-label {
+  cursor: pointer;
+}
+
+.round-confirm-label:hover {
+  background: #f8fafc;
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.25);
+}
+
+.current-round-label {
+  background: #dbeafe;
+  border-color: #60a5fa;
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.45);
+}
+
 .score-table-label small {
   font-size: 0.62rem;
   letter-spacing: 0.08em;
@@ -426,7 +452,7 @@ h2 {
 }
 
 .score-table-row.active {
-  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.2);
 }
 
 .dealer-dot {
@@ -522,16 +548,13 @@ h2 {
 
 .cell-editable {
   cursor: pointer;
-  background: #fef3c7 !important;
-  border-color: #fbbf24 !important;
   min-height: 52px;
   user-select: none;
   -webkit-user-select: none;
 }
 
 .cell-editable:active {
-  background: #fcd34d !important;
-  box-shadow: inset 0 0 0 2px rgba(251, 191, 36, 0.5);
+  background: #f8fafc !important;
 }
 
 .cell-modal-overlay {
@@ -632,10 +655,46 @@ h2 {
   width: 100%;
 }
 
+.data-actions {
+  display: grid;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.data-danger-zone {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  border-radius: 16px;
+}
+
+.danger-button {
+  background: #dc2626;
+  color: #fff;
+}
+
+.danger-button:disabled {
+  opacity: 0.7;
+}
+
 .games-list {
   display: grid;
   gap: 12px;
   margin-top: 16px;
+}
+
+.games-table-head {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.8fr) minmax(140px, 1fr) minmax(140px, 1fr) minmax(150px, 1fr);
+  gap: 12px;
+  padding: 0 14px;
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .game-row {
@@ -648,6 +707,12 @@ h2 {
 .game-info {
   display: grid;
   gap: 8px;
+}
+
+.game-row.compact .game-info {
+  grid-template-columns: minmax(90px, 0.8fr) minmax(140px, 1fr) minmax(140px, 1fr) minmax(150px, 1fr);
+  align-items: center;
+  gap: 12px;
 }
 
 .game-date {
@@ -675,6 +740,61 @@ h2 {
   border-top: 1px solid #dbe4f0;
 }
 
+.game-row.compact .game-date,
+.game-row.compact .game-winner {
+  margin: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.game-row.compact .game-winner .secondary-button {
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+
+.game-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.game-actions .secondary-button {
+  padding: 8px 12px;
+}
+
+.history-detail-modal {
+  max-width: min(960px, 96vw);
+  width: min(960px, 96vw);
+}
+
+.history-detail-date {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.history-score-table-wrap {
+  margin-top: 12px;
+}
+
+.history-score-table {
+  margin-bottom: 0;
+}
+
+.history-totals {
+  margin-top: 18px;
+}
+
+.history-totals h3 {
+  margin: 0 0 10px;
+  color: #0f172a;
+}
+
+.history-total-grid {
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+}
+
 .leaderboard-row {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -691,4 +811,20 @@ h2 {
   font-size: 0.75rem;
   color: #64748b;
   font-weight: 400;
+}
+
+@media (max-width: 560px) {
+  .game-row.compact .game-info {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .games-table-head {
+    display: none;
+  }
+
+  .history-detail-modal {
+    width: 94vw;
+    padding: 18px;
+  }
 }

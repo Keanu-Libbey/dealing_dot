@@ -1,5 +1,6 @@
 import { hasSupabaseConfig, supabase } from './supabase';
-import type { Player, LeaderboardRow, SavedGameRecord } from '../types';
+import type { Game } from './scoring';
+import type { Player, LeaderboardRow, SavedGameRecord, IncompleteGameRecord } from '../types';
 
 export async function fetchPlayers(): Promise<Player[]> {
   if (!hasSupabaseConfig || !supabase) {
@@ -40,6 +41,24 @@ export async function fetchGames(): Promise<SavedGameRecord[]> {
 
     const gameIds = games.map((g: any) => g.id);
 
+    let snapshotsByGameId: Record<string, Game | null> = {};
+    try {
+      const { data: snapshots, error: snapshotsError } = await supabase
+        .from('game_snapshots')
+        .select('game_id,game')
+        .in('game_id', gameIds);
+
+      if (snapshotsError) {
+        console.warn('[fetchGames] snapshots query skipped:', snapshotsError.message);
+      } else {
+        snapshotsByGameId = Object.fromEntries(
+          (snapshots ?? []).map((row: any) => [row.game_id, (row.game as Game | null) ?? null]),
+        );
+      }
+    } catch (error) {
+      console.warn('[fetchGames] snapshots lookup unavailable:', error);
+    }
+
     // Fetch results and players separately to avoid join permission issues
     const { data: results, error: resultsError } = await supabase
       .from('results')
@@ -79,6 +98,7 @@ export async function fetchGames(): Promise<SavedGameRecord[]> {
     const gameRecords = games.map((g: any) => ({
       id: g.id,
       played_at: g.played_at,
+      game: snapshotsByGameId[g.id] ?? null,
       scores: (resultsByGame[g.id] ?? []).map((r: any) => ({
         player_id: r.player_id,
         name: playerMap[r.player_id] ?? 'Unknown',
@@ -108,9 +128,85 @@ export async function fetchLeaderboard(): Promise<LeaderboardRow[]> {
   return (data ?? []) as LeaderboardRow[];
 }
 
+export async function fetchIncompleteGames(): Promise<IncompleteGameRecord[]> {
+  if (!hasSupabaseConfig || !supabase) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from('incomplete_games')
+    .select('id,saved_at,game')
+    .order('saved_at', { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []).flatMap((row: any) => {
+    const game = row.game as Game | null;
+    if (!game || !Array.isArray(game.playerIds) || !Array.isArray(game.rounds)) {
+      return [];
+    }
+
+    return [{
+      id: String(row.id),
+      saved_at: String(row.saved_at),
+      game,
+    }];
+  });
+}
+
+export async function saveIncompleteGame(game: Game): Promise<void> {
+  if (!hasSupabaseConfig || !supabase) {
+    throw new Error('Supabase is not configured yet. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to continue.');
+  }
+
+  const payload = {
+    id: game.startedAt,
+    saved_at: new Date().toISOString(),
+    game,
+  };
+
+  const { error } = await supabase
+    .from('incomplete_games')
+    .upsert(payload, { onConflict: 'id' });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function deleteIncompleteGame(id: string): Promise<void> {
+  if (!hasSupabaseConfig || !supabase) {
+    return;
+  }
+
+  const { error } = await supabase
+    .from('incomplete_games')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function clearSeasonData(): Promise<void> {
+  if (!hasSupabaseConfig || !supabase) {
+    throw new Error('Supabase is not configured yet. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to continue.');
+  }
+
+  const { error } = await supabase.rpc('clear_season_data');
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
 export async function saveGame(
   playedAt: string,
   playerScores: Array<{ player_id: string; score: number }>,
+  gameSnapshot?: Game,
 ): Promise<string> {
   if (!hasSupabaseConfig || !supabase) {
     throw new Error('Supabase is not configured yet. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to continue.');
@@ -203,5 +299,25 @@ export async function saveGame(
     throw new Error(error.message);
   }
 
-  return data as string;
+  const gameId = data as string;
+
+  if (gameSnapshot) {
+    try {
+      const { error: snapshotError } = await supabase
+        .from('game_snapshots')
+        .upsert({
+          game_id: gameId,
+          played_at: playedAt,
+          game: gameSnapshot,
+        }, { onConflict: 'game_id' });
+
+      if (snapshotError) {
+        console.warn('[saveGame] snapshot save skipped:', snapshotError.message);
+      }
+    } catch (snapshotError) {
+      console.warn('[saveGame] snapshot save unavailable:', snapshotError);
+    }
+  }
+
+  return gameId;
 }

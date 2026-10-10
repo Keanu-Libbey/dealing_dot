@@ -59,6 +59,20 @@ describe('getWinner', () => {
 });
 
 describe('generateForcedBidSet', () => {
+  it('uses the predefined 5-player 9-card FBU bids', () => {
+    const playerIds = ['p1', 'p2', 'p3', 'p4', 'p5'];
+    const bids = generateForcedBidSet(playerIds, 9, 'fbu');
+
+    expect(Object.values(bids).sort((a, b) => a - b)).toEqual([0, 1, 2, 2, 3]);
+  });
+
+  it('uses the predefined 5-player 9-card FBO bids', () => {
+    const playerIds = ['p1', 'p2', 'p3', 'p4', 'p5'];
+    const bids = generateForcedBidSet(playerIds, 9, 'fbo');
+
+    expect(Object.values(bids).sort((a, b) => a - b)).toEqual([1, 2, 2, 2, 3]);
+  });
+
   it('creates a valid FBU bid set that matches the required total', () => {
     const playerIds = ['p1', 'p2', 'p3'];
     const bids = generateForcedBidSet(playerIds, 3, 'fbu');
@@ -71,6 +85,15 @@ describe('generateForcedBidSet', () => {
   it('creates a valid FBO bid set that matches the required total', () => {
     const playerIds = ['p1', 'p2', 'p3'];
     const bids = generateForcedBidSet(playerIds, 3, 'fbo');
+
+    const total = Object.values(bids).reduce((sum, value) => sum + value, 0);
+    expect(total).toBe(4);
+    expect(Object.values(bids).every((bid) => bid >= 0 && bid <= 3)).toBe(true);
+  });
+
+  it('falls back to the general algorithm for other permutations', () => {
+    const playerIds = ['p1', 'p2', 'p3', 'p4'];
+    const bids = generateForcedBidSet(playerIds, 5, 'fbu');
 
     const total = Object.values(bids).reduce((sum, value) => sum + value, 0);
     expect(total).toBe(4);

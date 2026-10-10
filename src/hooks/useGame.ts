@@ -147,6 +147,10 @@ export function useGame() {
     setGame(null);
   }, []);
 
+  const loadGame = useCallback((nextGame: Game) => {
+    setGame(nextGame);
+  }, []);
+
   return {
     game,
     isReady,
@@ -154,5 +158,6 @@ export function useGame() {
     addRound,
     undoLastRound,
     resetGame,
+    loadGame,
   };
 }

@@ -2,15 +2,25 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import './App.css';
 import { buildDealingDotLayout, useGame } from './hooks/useGame';
-import { fetchGames, fetchLeaderboard, fetchPlayers, saveGame } from './lib/gameService';
+import {
+  deleteIncompleteGame,
+  clearSeasonData,
+  fetchGames,
+  fetchIncompleteGames,
+  fetchLeaderboard,
+  fetchPlayers,
+  saveGame,
+  saveIncompleteGame,
+} from './lib/gameService';
 import {
   calcPoints,
   generateForcedBidSet,
+  type Game,
   getTotals,
   getWinner,
   type Round,
 } from './lib/scoring';
-import type { LeaderboardRow, Player, SavedGameRecord } from './types';
+import type { IncompleteGameRecord, LeaderboardRow, Player, SavedGameRecord } from './types';
 
 const DEFAULT_PLAYERS = [
   'Keanu',
@@ -26,10 +36,59 @@ const HIGHEST_ROUND_OPTIONS = [6, 7, 8, 9] as const;
 // passcode removed — saves no longer require a group passcode
 const normalizePlayerName = (name: string) => name.trim().toLowerCase();
 
-type Screen = 'home' | 'setup' | 'game' | 'summary' | 'history' | 'games';
+type SeasonExportRow = {
+  table: string;
+  recordId: string;
+  payload: Record<string, unknown>;
+};
+
+const csvEscape = (value: string) => `"${value.replaceAll('"', '""')}"`;
+
+const buildSeasonExportCsv = (rows: SeasonExportRow[]) => {
+  const header = ['table', 'record_id', 'payload_json'].join(',');
+  const lines = rows.map((row) => [
+    csvEscape(row.table),
+    csvEscape(row.recordId),
+    csvEscape(JSON.stringify(row.payload)),
+  ].join(','));
+
+  return [header, ...lines].join('\n');
+};
+
+const downloadTextFile = (filename: string, content: string) => {
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+};
+
+type Screen = 'home' | 'setup' | 'game' | 'summary' | 'history' | 'games' | 'data';
+
+type DraftAction = {
+  playerId: string;
+  field: 'bid' | 'tricks';
+  previousValue: number | null;
+};
+
+type HistoryDetailState = {
+  title: string;
+  dateIso: string;
+  game: Game | null;
+  scores: Array<{
+    player_id: string;
+    name: string;
+    score: number;
+  }>;
+  unavailableMessage?: string;
+};
 
 function App() {
-  const { game, startGame, addRound, undoLastRound, resetGame } = useGame();
+  const { game, startGame, addRound, undoLastRound, resetGame, loadGame } = useGame();
   const [screen, setScreen] = useState<Screen>('home');
   const [selectedPlayers, setSelectedPlayers] = useState<string[]>(DEFAULT_PLAYERS);
   const [highestRound, setHighestRound] = useState<number>(7);
@@ -46,6 +105,17 @@ function App() {
   const [bidMenuCell, setBidMenuCell] = useState<string | null>(null);
   const [tricksInputCell, setTricksInputCell] = useState<string | null>(null);
   const [tricksInputValue, setTricksInputValue] = useState<string>('');
+  const [activeCell, setActiveCell] = useState<string | null>(null);
+  const [draftActions, setDraftActions] = useState<DraftAction[]>([]);
+  const [finishConfirming, setFinishConfirming] = useState(false);
+  const [incompleteGames, setIncompleteGames] = useState<IncompleteGameRecord[]>([]);
+  const [statusToast, setStatusToast] = useState<string | null>(null);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [historyDetail, setHistoryDetail] = useState<HistoryDetailState | null>(null);
+  const [isExportingData, setIsExportingData] = useState(false);
+  const [isClearingData, setIsClearingData] = useState(false);
+  const [clearDataConfirming, setClearDataConfirming] = useState(false);
+  const pendingRestoreRoundRef = useRef<Round | null>(null);
   const longPressTimer = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
 
@@ -84,9 +154,20 @@ function App() {
       }
     };
 
+    const loadIncomplete = async () => {
+      try {
+        const rows = await fetchIncompleteGames();
+        setIncompleteGames(rows);
+      } catch (error) {
+        console.warn('Unable to load incomplete games.', error);
+        setIncompleteGames([]);
+      }
+    };
+
     void loadPlayers();
     void loadLeaderboard();
     void loadGames();
+    void loadIncomplete();
   }, []);
 
   // no passcode persistence
@@ -150,13 +231,16 @@ function App() {
       return;
     }
 
+    if (pendingRestoreRoundRef.current) {
+      setDraftBids({ ...pendingRestoreRoundRef.current.bids });
+      setDraftTricks({ ...pendingRestoreRoundRef.current.tricks });
+      setDraftActions([]);
+      pendingRestoreRoundRef.current = null;
+      return;
+    }
+
     const startingBids: Record<string, number> = {};
     const startingTricks: Record<string, number> = {};
-
-    for (const playerId of game.playerIds) {
-      startingTricks[playerId] = 0;
-      startingBids[playerId] = 0;
-    }
 
     if (currentRoundTemplate.roundType === 'fbu' || currentRoundTemplate.roundType === 'fbo') {
       const forcedBids = generateForcedBidSet(
@@ -175,7 +259,26 @@ function App() {
 
     setDraftBids(startingBids);
     setDraftTricks(startingTricks);
+    setDraftActions([]);
   }, [currentRoundTemplate, game]);
+
+  useEffect(() => {
+    if (!game) {
+      setFinishConfirming(false);
+    }
+  }, [game]);
+
+  useEffect(() => {
+    if (!statusToast) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setStatusToast(null);
+    }, 2200);
+
+    return () => window.clearTimeout(timeout);
+  }, [statusToast]);
 
   const togglePlayer = (playerName: string) => {
     setSelectedPlayers((current) =>
@@ -222,6 +325,14 @@ function App() {
     };
   };
 
+  const parseCellKey = (cellKey: string) => {
+    const lastDashIndex = cellKey.lastIndexOf('-');
+    const playerId = cellKey.slice(0, lastDashIndex);
+    const roundIndex = Number(cellKey.slice(lastDashIndex + 1));
+
+    return { playerId, roundIndex };
+  };
+
   const getCellKey = (playerId: string, roundIndex: number) => `${playerId}-${roundIndex}`;
 
   const clearLongPressTimer = () => {
@@ -232,18 +343,60 @@ function App() {
   };
 
   const handleBidSelect = (cellKey: string, bid: number) => {
-    const [playerId] = cellKey.split('-');
+    const { playerId } = parseCellKey(cellKey);
     const maxBid = getCurrentRoundLimits().bidMax;
+
+    const nextBid = clampValue(bid, 0, maxBid);
 
     setDraftBids((current) => ({
       ...current,
-      [playerId]: clampValue(bid, 0, maxBid),
+      [playerId]: nextBid,
     }));
+    setDraftActions((current) => [
+      ...current,
+      {
+        playerId,
+        field: 'bid',
+        previousValue: draftBids[playerId] ?? null,
+      },
+    ]);
+
+    setActiveCell(cellKey);
     setBidMenuCell(null);
   };
 
+  const getAllowedBidOptions = (cellKey: string): number[] => {
+    if (!game || !currentRoundTemplate) {
+      return [];
+    }
+
+    const { playerId, roundIndex } = parseCellKey(cellKey);
+    if (roundIndex !== currentRoundIndex) {
+      return [];
+    }
+
+    const { bidMax } = getCurrentRoundLimits();
+    const options = Array.from({ length: bidMax + 1 }, (_, index) => index);
+    const dealerPlayerId = game.playerIds[currentRoundTemplate.dealerIndex];
+    const isDealerCell = playerId === dealerPlayerId;
+
+    if (!isDealerCell) {
+      return options;
+    }
+
+    const otherPlayerIds = game.playerIds.filter((id) => id !== playerId);
+    const allOtherBidsEntered = otherPlayerIds.every((id) => (draftBids[id] ?? null) !== null);
+
+    if (!allOtherBidsEntered) {
+      return options;
+    }
+
+    const otherBidsTotal = otherPlayerIds.reduce((sum, id) => sum + (draftBids[id] ?? 0), 0);
+    return options.filter((option) => otherBidsTotal + option !== currentRoundTemplate.cardCount);
+  };
+
   const handleTricksSubmit = (cellKey: string, result: number) => {
-    const [playerId] = cellKey.split('-');
+    const { playerId } = parseCellKey(cellKey);
     const { trickMax } = getCurrentRoundLimits();
     const nextTricks = clampValue(result, 0, trickMax);
 
@@ -251,6 +404,15 @@ function App() {
       ...current,
       [playerId]: nextTricks,
     }));
+    setDraftActions((current) => [
+      ...current,
+      {
+        playerId,
+        field: 'tricks',
+        previousValue: draftTricks[playerId] ?? null,
+      },
+    ]);
+    setActiveCell(cellKey);
     setTricksInputCell(null);
     setTricksInputValue('');
   };
@@ -266,46 +428,82 @@ function App() {
     }
 
     const cellKey = getCellKey(playerId, roundIndex);
-    const bid = draftBids[playerId] ?? 0;
-    const tricks = draftTricks[playerId] ?? 0;
+    const bid = draftBids[playerId] ?? null;
+    const tricks = draftTricks[playerId] ?? null;
 
-    if (bid === 0) {
+    setActiveCell(cellKey);
+
+    if (bid === null && tricks === null) {
       setBidMenuCell(cellKey);
       return;
     }
 
-    if (tricks === 0) {
-      setTricksInputCell(cellKey);
-      setTricksInputValue('');
-      return;
-    }
-
     setTricksInputCell(cellKey);
-    setTricksInputValue(String(tricks));
+    setTricksInputValue(tricks !== null ? String(tricks) : '');
   };
 
-  const handleCellLongPressStart = (playerId: string) => {
+  const handleCellDoubleClick = (playerId: string, roundIndex: number) => {
     if (!currentRoundTemplate) {
       return;
     }
 
-    const bid = draftBids[playerId] ?? 0;
-    if (bid === 0) {
+    const bid = draftBids[playerId] ?? null;
+    if (bid === null) {
+      setBidMenuCell(getCellKey(playerId, roundIndex));
+      return;
+    }
+
+    const autoWin = currentRoundTemplate.roundType === 'misery' ? 0 : bid + 10;
+    setDraftTricks((current) => ({
+      ...current,
+      [playerId]: autoWin,
+    }));
+    setDraftActions((current) => [
+      ...current,
+      {
+        playerId,
+        field: 'tricks',
+        previousValue: draftTricks[playerId] ?? null,
+      },
+    ]);
+    setActiveCell(getCellKey(playerId, roundIndex));
+    setBidMenuCell(null);
+    setTricksInputCell(null);
+    setTricksInputValue('');
+  };
+
+  const handleCellLongPressStart = (playerId: string, roundIndex: number) => {
+    if (!currentRoundTemplate) {
+      return;
+    }
+
+    const bid = draftBids[playerId] ?? null;
+    if (bid === null) {
       return;
     }
 
     clearLongPressTimer();
     longPressTimer.current = window.setTimeout(() => {
+      const autoWin = currentRoundTemplate.roundType === 'misery' ? 0 : (bid ?? 0) + 10;
       setDraftTricks((current) => ({
         ...current,
-        [playerId]: bid,
+        [playerId]: autoWin,
       }));
+      setDraftActions((current) => [
+        ...current,
+        {
+          playerId,
+          field: 'tricks',
+          previousValue: draftTricks[playerId] ?? null,
+        },
+      ]);
       longPressTriggeredRef.current = true;
+      setActiveCell(getCellKey(playerId, roundIndex));
       setBidMenuCell(null);
       setTricksInputCell(null);
       setTricksInputValue('');
       clearLongPressTimer();
-    }, 1500);
+    }, 500);
   };
 
   const handleCellLongPressEnd = () => {
@@ -346,7 +544,53 @@ function App() {
 
     setStartError(null);
     startGame(resolvedIds, highestRound);
+    setFinishConfirming(false);
     setScreen('game');
+  };
+
+  const handleUndoLastAction = () => {
+    if (!game) {
+      return;
+    }
+
+    if (draftActions.length > 0) {
+      const lastAction = draftActions[draftActions.length - 1];
+      setDraftActions((current) => current.slice(0, -1));
+
+      if (lastAction.field === 'bid') {
+        setDraftBids((current) => {
+          const next = { ...current };
+          if (lastAction.previousValue === null) {
+            delete next[lastAction.playerId];
+          } else {
+            next[lastAction.playerId] = lastAction.previousValue;
+          }
+          return next;
+        });
+      } else {
+        setDraftTricks((current) => {
+          const next = { ...current };
+          if (lastAction.previousValue === null) {
+            delete next[lastAction.playerId];
+          } else {
+            next[lastAction.playerId] = lastAction.previousValue;
+          }
+          return next;
+        });
+      }
+
+      setActiveCell(getCellKey(lastAction.playerId, currentRoundIndex));
+      return;
+    }
+
+    if (game.rounds.length === 0) {
+      return;
+    }
+
+    const previousRound = game.rounds[game.rounds.length - 1];
+    pendingRestoreRoundRef.current = previousRound;
+    undoLastRound();
+    setFinishConfirming(false);
   };
 
   const handleConfirmRound = () => {
@@ -354,14 +598,74 @@ function App() {
       return;
     }
 
+    const completedBids = { ...draftBids };
+    const completedTricks = { ...draftTricks };
+
+    for (const playerId of game.playerIds) {
+      const bid = completedBids[playerId] ?? null;
+      const tricks = completedTricks[playerId] ?? null;
+
+      if (tricks === null && bid !== null) {
+        completedTricks[playerId] = currentRoundTemplate.roundType === 'misery' ? 0 : bid;
+      }
+    }
+
     const round: Round = {
       cardCount: currentRoundTemplate.cardCount,
       roundType: currentRoundTemplate.roundType,
-      bids: draftBids,
-      tricks: draftTricks,
+      bids: completedBids,
+      tricks: completedTricks,
     };
 
     addRound(round);
+    setDraftActions([]);
+  };
+
+  const handleSaveForLater = () => {
+    if (!game || isSavingDraft) {
+      return;
+    }
+
+    void (async () => {
+      setIsSavingDraft(true);
+      setSaveError(null);
+
+      try {
+        await saveIncompleteGame(game);
+        const rows = await fetchIncompleteGames();
+        setIncompleteGames(rows);
+        resetGame();
+        setFinishConfirming(false);
+        setStatusToast('Game saved for later. Resume from Game history.');
+        setScreen('home');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unable to save the game for later.';
+        setSaveError(message);
+      } finally {
+        setIsSavingDraft(false);
+      }
+    })();
+  };
+
+  const handleResumeIncompleteGame = (recordId: string) => {
+    const record = incompleteGames.find((item) => item.id === recordId);
+    if (!record) {
+      return;
+    }
+
+    loadGame(record.game);
+    setSaveError(null);
+    setFinishConfirming(false);
+    setScreen('game');
+  };
+
+  const handleFinishGameClick = () => {
+    if (!finishConfirming) {
+      setFinishConfirming(true);
+      return;
+    }
+
+    void handleSaveGame();
   };
 
   const handleSaveGame = async () => {
@@ -378,18 +682,144 @@ function App() {
     setSaveError(null);
 
     try {
-      await saveGame(new Date().toISOString(), playerScores);
+      await saveGame(new Date().toISOString(), playerScores, game);
+      try {
+        await deleteIncompleteGame(game.startedAt);
+      } catch (error) {
+        console.warn('Completed game saved, but draft cleanup failed.', error);
+      }
       resetGame();
       setScreen('home');
       const rows = await fetchLeaderboard();
       setLeaderboard(rows);
       const gameRows = await fetchGames();
       setGames(gameRows);
+      const incompleteRows = await fetchIncompleteGames();
+      setIncompleteGames(incompleteRows);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to save the game.';
       setSaveError(message);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleExportData = async () => {
+    setIsExportingData(true);
+    setSaveError(null);
+
+    try {
+      const [allPlayers, allGames, allIncompleteGames, allLeaderboard] = await Promise.all([
+        fetchPlayers(),
+        fetchGames(),
+        fetchIncompleteGames(),
+        fetchLeaderboard(),
+      ]);
+
+      const exportRows: SeasonExportRow[] = [];
+
+      allPlayers.forEach((player) => {
+        exportRows.push({
+          table: 'players',
+          recordId: player.id,
+          payload: { id: player.id, name: player.name },
+        });
+      });
+
+      allGames.forEach((savedGame) => {
+        exportRows.push({
+          table: 'games',
+          recordId: savedGame.id,
+          payload: {
+            id: savedGame.id,
+            played_at: savedGame.played_at,
+          },
+        });
+
+        savedGame.scores.forEach((score) => {
+          exportRows.push({
+            table: 'results',
+            recordId: `${savedGame.id}:${score.player_id}`,
+            payload: {
+              game_id: savedGame.id,
+              player_id: score.player_id,
+              player_name: score.name,
+              score: score.score,
+            },
+          });
+        });
+
+        if (savedGame.game) {
+          exportRows.push({
+            table: 'game_snapshots',
+            recordId: savedGame.id,
+            payload: {
+              game_id: savedGame.id,
+              played_at: savedGame.played_at,
+              game: savedGame.game,
+            },
+          });
+        }
+      });
+
+      allIncompleteGames.forEach((record) => {
+        exportRows.push({
+          table: 'incomplete_games',
+          recordId: record.id,
+          payload: {
+            id: record.id,
+            saved_at: record.saved_at,
+            game: record.game,
+          },
+        });
+      });
+
+      allLeaderboard.forEach((row) => {
+        exportRows.push({
+          table: 'leaderboard',
+          recordId: row.name,
+          payload: row,
+        });
+      });
+
+      const csv = buildSeasonExportCsv(exportRows);
+      const filename = `nomo-season-backup-${new Date().toISOString().slice(0, 10)}.csv`;
+      downloadTextFile(filename, csv);
+      setStatusToast('Season data exported.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to export season data.';
+      setSaveError(message);
+    } finally {
+      setIsExportingData(false);
+    }
+  };
+
+  const handleDeleteSeasonData = async () => {
+    if (!clearDataConfirming) {
+      setClearDataConfirming(true);
+      return;
+    }
+
+    setIsClearingData(true);
+    setSaveError(null);
+
+    try {
+      await clearSeasonData();
+      setPlayers([]);
+      setLeaderboard([]);
+      setGames([]);
+      setIncompleteGames([]);
+      setSelectedPlayers(DEFAULT_PLAYERS);
+      setHistoryDetail(null);
+      setClearDataConfirming(false);
+      setStatusToast('Season data cleared.');
+      resetGame();
+      setScreen('home');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to clear season data.';
+      setSaveError(message);
+    } finally {
+      setIsClearingData(false);
     }
   };
 
@@ -511,11 +941,14 @@ function App() {
               </h1>
             </div>
             <div className="button-row">
-              <button type="button" className="secondary-button" onClick={undoLastRound}>
+              <button type="button" className="secondary-button" onClick={handleUndoLastAction}>
                 Undo last
               </button>
-              <button type="button" className="secondary-button" onClick={() => setScreen('summary')}>
-                Finish game
+              <button type="button" className="secondary-button" onClick={handleSaveForLater} disabled={isSavingDraft}>
+                {isSavingDraft ? 'Saving draft...' : 'Save for later'}
+              </button>
+              <button type="button" className="secondary-button" onClick={handleFinishGameClick} disabled={isSaving}>
+                {isSaving ? 'Saving...' : finishConfirming ? 'Sure?' : 'Finish game'}
               </button>
             </div>
           </div>
@@ -542,47 +975,68 @@ function App() {
                   className={isCurrentRound ? 'score-table-row active' : 'score-table-row'}
                   style={{ gridTemplateColumns: `120px repeat(${game.playerIds.length}, minmax(90px, 1fr))` }}
                 >
-                  <div className="score-table-label">
+                  <div
+                    className={isCurrentRound ? 'score-table-label round-confirm-label current-round-label' : 'score-table-label round-confirm-label'}
+                    onDoubleClick={() => isCurrentRound && handleConfirmRound()}
+                  >
                     <span>{row.cardCount}</span>
                     {labelText ? <small>{labelText}</small> : null}
                   </div>
 
                   {game.playerIds.map((playerId, playerColumnIndex) => {
-                    let bid = previousRound?.bids[playerId] ?? 0;
-                    let tricks = previousRound?.tricks[playerId] ?? 0;
+                    let bid = previousRound?.bids[playerId] ?? null;
+                    let tricks = previousRound?.tricks[playerId] ?? null;
 
                     if (isCurrentRound) {
-                      bid = draftBids[playerId] ?? 0;
-                      tricks = draftTricks[playerId] ?? 0;
+                      bid = draftBids[playerId] ?? null;
+                      tricks = draftTricks[playerId] ?? null;
                     }
 
-                    const points = previousRound ? calcPoints(bid, tricks, row.roundType) : 0;
+                    const points = previousRound ? calcPoints(bid ?? 0, tricks ?? 0, row.roundType) : 0;
                     const isDealerCell = playerColumnIndex === dealerIndex;
-                    const cellKey = `${playerId}-${index}`;
+                    const cellKey = getCellKey(playerId, index);
+                    const isActiveCell = activeCell === cellKey;
 
                     let displayValue: string;
                     if (isCurrentRound) {
-                      displayValue = bid > 0 ? `${bid}-` : '-';
-                      if (tricks > 0) {
+                      if (currentRoundTemplate.roundType === 'misery') {
+                        if (tricks === null) {
+                          displayValue = '.';
+                        } else if (tricks === 0) {
+                          displayValue = '0';
+                        } else {
+                          displayValue = String(calcPoints(0, tricks, 'misery'));
+                        }
+                      } else if (bid === null && tricks === null) {
+                        displayValue = '.';
+                      } else if (bid !== null && tricks === null) {
+                        displayValue = `${bid}-.`;
+                      } else if (bid !== null && tricks !== null) {
                         displayValue = `${bid}-${tricks}`;
+                      } else {
+                        displayValue = '.';
                       }
+                    } else if (previousRound?.roundType === 'misery') {
+                      const points = calcPoints(0, tricks ?? 0, 'misery');
+                      displayValue = points === 0 ? '0' : String(points);
                     } else if (previousRound) {
-                      displayValue = `${bid}-${points}`;
+                      displayValue = `${bid ?? 0}-${points}`;
                     } else {
-                      displayValue = '-';
+                      displayValue = '.';
                     }
 
                     return (
                       <div
                         key={cellKey}
-                        className={`score-table-cell ${isDealerCell ? 'dealer-highlight' : ''} ${isCurrentRound ? 'cell-editable' : ''}`}
-                        onTouchStart={() => isCurrentRound && handleCellLongPressStart(playerId)}
+                        className={`score-table-cell ${isDealerCell ? 'dealer-highlight' : ''} ${isActiveCell ? 'cell-selected' : ''}`}
+                        onTouchStart={() => isCurrentRound && handleCellLongPressStart(playerId, index)}
                         onTouchEnd={handleCellLongPressEnd}
-                        onMouseDown={() => isCurrentRound && handleCellLongPressStart(playerId)}
+                        onMouseDown={() => isCurrentRound && handleCellLongPressStart(playerId, index)}
                         onMouseUp={handleCellLongPressEnd}
                         onClick={() => isCurrentRound && handleCellTap(playerId, index)}
+                        onDoubleClick={() => isCurrentRound && handleCellDoubleClick(playerId, index)}
                       >
-                        {previousRound || tricks > 0 ? (
+                        {previousRound || (bid !== null && tricks !== null) || (bid !== null && tricks === null) ? (
                           <strong>{displayValue}</strong>
                         ) : (
                           <span>{displayValue}</span>
@@ -600,7 +1054,7 @@ function App() {
               <div className="cell-modal" onClick={(e) => e.stopPropagation()}>
                 <p className="cell-modal-title">Select bid (0–{currentRoundTemplate.cardCount})</p>
                 <div className="bid-menu">
-                  {Array.from({ length: currentRoundTemplate.cardCount + 1 }, (_, i) => i).map(
+                  {getAllowedBidOptions(bidMenuCell).map(
                     (bidOption) => (
                       <button
                         key={bidOption}
@@ -647,10 +1101,6 @@ function App() {
               </div>
             </div>
           )}
-
-          <button type="button" className="primary-button" onClick={handleConfirmRound}>
-            Confirm round
-          </button>
         </div>
       </main>
     );
@@ -705,6 +1155,7 @@ function App() {
   const renderHome = () => (
     <main className="app-shell home-screen">
       <div className="panel">
+        {statusToast ? <p className="status-toast">{statusToast}</p> : null}
         <p className="eyebrow">Nomo scorer</p>
         <h1>Home</h1>
 
@@ -730,13 +1181,104 @@ function App() {
           >
             View game history
           </button>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => setScreen('data')}
+          >
+            Manage data
+          </button>
+        </div>
+      </div>
+    </main>
+  );
+
+  const renderDataManagement = () => (
+    <main className="app-shell data-screen">
+      <div className="panel">
+        {statusToast ? <p className="status-toast">{statusToast}</p> : null}
+        <div className="scoreboard-head">
+          <div>
+            <p className="eyebrow">Season data</p>
+            <h1>Manage data</h1>
+          </div>
+          <button type="button" className="secondary-button" onClick={() => setScreen('home')}>
+            Home
+          </button>
+        </div>
+
+        <div className="summary-row">
+          <span>Players: {players.length}</span>
+          <span>Games: {games.length}</span>
+          <span>Drafts: {incompleteGames.length}</span>
+          <span>Saved snapshots: {games.filter((savedGame) => Boolean(savedGame.game)).length}</span>
+        </div>
+
+        <div className="data-actions">
+          <button type="button" className="primary-button" onClick={() => void handleExportData()} disabled={isExportingData || isClearingData}>
+            {isExportingData ? 'Exporting...' : 'Export data'}
+          </button>
+
+          <div className="data-danger-zone">
+            <p>
+              Delete all season data from the database after you have exported it. This clears players,
+              games, results, saved drafts, and score-sheet snapshots.
+            </p>
+            {saveError ? <p className="save-error">{saveError}</p> : null}
+            <button
+              type="button"
+              className="secondary-button danger-button"
+              onClick={() => void handleDeleteSeasonData()}
+              disabled={isClearingData || isExportingData}
+            >
+              {isClearingData ? (clearDataConfirming ? 'Clearing...' : 'Preparing...') : clearDataConfirming ? 'Confirm delete' : 'Delete data'}
+            </button>
+            {clearDataConfirming ? (
+              <p className="empty-state">Press again to permanently clear the current season from Supabase.</p>
+            ) : null}
+          </div>
         </div>
       </div>
     </main>
   );
 
   const renderGameHistory = () => {
-    const gameCount = games.length;
+    const completeRows = games.map((savedGame) => {
+      const winner = savedGame.scores.length > 0
+        ? savedGame.scores.reduce((max, curr) => (curr.score > max.score ? curr : max))
+        : null;
+
+      return {
+        id: savedGame.id,
+        dateIso: savedGame.played_at,
+        winner: winner ? winner.name : '-',
+        status: 'complete' as const,
+        game: savedGame.game ?? null,
+        scores: savedGame.scores,
+      };
+    });
+
+    const incompleteRows = incompleteGames.map((record) => {
+      const recordTotals = getTotals(record.game);
+      const recordWinnerId = getWinner(recordTotals);
+
+      return {
+        id: record.id,
+        dateIso: record.saved_at,
+        winner: recordWinnerId ? (playerNameById[recordWinnerId] ?? recordWinnerId) : 'Incomplete',
+        status: 'incomplete' as const,
+        game: record.game,
+        scores: record.game.playerIds.map((playerId) => ({
+          player_id: playerId,
+          name: playerNameById[playerId] ?? playerId,
+          score: recordTotals[playerId] ?? 0,
+        })),
+      };
+    });
+
+    const mergedRows = [...completeRows, ...incompleteRows].sort(
+      (a, b) => new Date(b.dateIso).getTime() - new Date(a.dateIso).getTime(),
+    );
 
     return (
       <main className="app-shell games-screen">
@@ -752,39 +1294,167 @@ function App() {
           </div>
 
           <div className="games-list">
-            {games.length === 0 ? (
+            {mergedRows.length === 0 ? (
               <p className="empty-state">No games saved yet.</p>
             ) : (
-              games.map((savedGame, index) => {
-                const gameDate = new Date(savedGame.played_at);
-                const dateStr = gameDate.toLocaleDateString('en-GB');
-                const timeStr = gameDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-                const gameNumber = gameCount - index;
-                const winner = savedGame.scores.length > 0
-                  ? savedGame.scores.reduce((max, curr) => (curr.score > max.score ? curr : max))
-                  : null;
+              <>
+                <div className="games-table-head">
+                  <span>Game #</span>
+                  <span>Winner</span>
+                  <span>Date</span>
+                  <span>Actions</span>
+                </div>
+                {mergedRows.map((row, index) => {
+                  const gameDate = new Date(row.dateIso);
+                  const dateStr = gameDate.toLocaleDateString('en-GB');
+                  const timeStr = gameDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+                  const gameNumber = mergedRows.length - index;
 
-                return (
-                  <div key={savedGame.id} className="game-row">
-                    <div className="game-info">
-                      <div><strong>Game #{gameNumber}</strong></div>
-                      <div className="game-date">{dateStr} at {timeStr}</div>
-                      <div className="game-scores">
-                        {savedGame.scores.map((score) => (
-                          <span key={score.player_id}>
-                            {score.name}: <strong>{score.score}</strong>
-                          </span>
-                        ))}
+                  return (
+                    <div key={row.id} className="game-row compact">
+                      <div className="game-info">
+                        <div><strong>{gameNumber}</strong></div>
+                        <div className="game-winner">
+                          {row.status === 'incomplete' ? (
+                            'Incomplete'
+                          ) : (
+                            row.winner
+                          )}
+                        </div>
+                        <div className="game-date">{dateStr} {timeStr}</div>
+                        <div className="game-actions">
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => setHistoryDetail({
+                              title: `Game #${gameNumber}`,
+                              dateIso: row.dateIso,
+                              game: row.game,
+                              scores: row.scores,
+                              unavailableMessage:
+                                row.game
+                                  ? undefined
+                                  : 'Detailed scoresheet is unavailable for this older game because it was saved before snapshot history was enabled.',
+                            })}
+                          >
+                            View
+                          </button>
+                          {row.status === 'incomplete' ? (
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              onClick={() => handleResumeIncompleteGame(row.id)}
+                            >
+                              Resume
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
-                      {winner ? <div className="game-winner">Winner: {winner.name}</div> : null}
                     </div>
-                  </div>
-                );
-              })
+                  );
+                })}
+              </>
             )}
           </div>
+
+          {historyDetail ? renderHistoryDetailModal(historyDetail) : null}
         </div>
       </main>
+    );
+  };
+
+  const renderHistoryDetailModal = (detail: HistoryDetailState) => {
+    const detailDate = new Date(detail.dateIso);
+    const dateLabel = `${detailDate.toLocaleDateString('en-GB')} ${detailDate.toLocaleTimeString('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+    })}`;
+    const detailGame = detail.game;
+    const detailTotals = detailGame ? getTotals(detailGame) : null;
+    const detailRounds = detailGame
+      ? buildDealingDotLayout(detailGame.playerIds.length, detailGame.highestRound)
+      : [];
+
+    return (
+      <div className="cell-modal-overlay" onClick={() => setHistoryDetail(null)}>
+        <div className="cell-modal history-detail-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="scoreboard-head">
+            <div>
+              <p className="eyebrow">History</p>
+              <h2>{detail.title}</h2>
+              <p className="history-detail-date">{dateLabel}</p>
+            </div>
+            <button type="button" className="secondary-button" onClick={() => setHistoryDetail(null)}>
+              Close
+            </button>
+          </div>
+
+          {detail.unavailableMessage ? <p className="empty-state">{detail.unavailableMessage}</p> : null}
+
+          {detailGame ? (
+            <div className="history-score-table-wrap">
+              <div className="score-table history-score-table">
+                <div className="score-table-header" style={{ gridTemplateColumns: `90px repeat(${detailGame.playerIds.length}, minmax(78px, 1fr))` }}>
+                  <div className="score-table-corner">Round</div>
+                  {detailGame.playerIds.map((playerId) => (
+                    <div key={playerId} className="score-table-header-cell">
+                      {playerNameById[playerId] ?? playerId}
+                    </div>
+                  ))}
+                </div>
+
+                {detailRounds.map((row, index) => {
+                  const playedRound = detailGame.rounds[index] ?? null;
+                  const labelText = row.roundType === 'normal' ? '' : row.roundType.toUpperCase();
+
+                  return (
+                    <div
+                      key={`${row.cardCount}-${row.roundType}-${index}-history`}
+                      className="score-table-row"
+                      style={{ gridTemplateColumns: `90px repeat(${detailGame.playerIds.length}, minmax(78px, 1fr))` }}
+                    >
+                      <div className="score-table-label">
+                        <span>{row.cardCount}</span>
+                        {labelText ? <small>{labelText}</small> : null}
+                      </div>
+
+                      {detailGame.playerIds.map((playerId, playerColumnIndex) => {
+                        const bid = playedRound?.bids[playerId] ?? null;
+                        const tricks = playedRound?.tricks[playerId] ?? null;
+                        const isDealerCell = playerColumnIndex === row.dealerIndex;
+                        const displayValue = playedRound?.roundType === 'misery'
+                          ? (tricks === null ? '.' : (calcPoints(0, tricks, 'misery') === 0 ? '0' : String(calcPoints(0, tricks, 'misery'))))
+                          : (bid !== null && tricks !== null ? `${bid}-${tricks}` : '.');
+
+                        return (
+                          <div
+                            key={`${playerId}-${index}-history-cell`}
+                            className={`score-table-cell ${isDealerCell ? 'dealer-highlight' : ''}`}
+                          >
+                            {bid !== null && tricks !== null ? <strong>{displayValue}</strong> : <span>{displayValue}</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="history-totals">
+            <h3>Totals</h3>
+            <div className="score-grid history-total-grid">
+              {detail.scores.map((score) => (
+                <div key={score.player_id} className="score-card">
+                  <h2>{score.name}</h2>
+                  <strong>{detailTotals?.[score.player_id] ?? score.score}</strong>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
     );
   };
 
@@ -838,6 +1508,10 @@ function App() {
 
   if (screen === 'games') {
     return renderGameHistory();
+  }
+
+  if (screen === 'data') {
+    return renderDataManagement();
   }
 
   return renderHistory();

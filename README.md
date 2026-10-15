@@ -10,6 +10,8 @@ To make completed game score-sheets viewable from Game history too, also run [su
 
 To enable the app's season reset button, also run [supabase/season_reset.sql](supabase/season_reset.sql).
 
+To enable deleting individual completed games from Game history, run [supabase/delete_game_record.sql](supabase/delete_game_record.sql).
+
 This creates a shared `incomplete_games` table used by the app for:
 - saving drafts from one phone
 - resuming them from another phone

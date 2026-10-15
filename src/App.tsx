@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
 import { buildDealingDotLayout, useGame } from './hooks/useGame';
 import {
+  deleteSavedGame,
   deleteIncompleteGame,
   clearSeasonData,
   fetchGames,
@@ -115,6 +116,9 @@ function App() {
   const [isExportingData, setIsExportingData] = useState(false);
   const [isClearingData, setIsClearingData] = useState(false);
   const [clearDataConfirming, setClearDataConfirming] = useState(false);
+  const [summaryRevealCount, setSummaryRevealCount] = useState(0);
+  const [confirmDeleteGameId, setConfirmDeleteGameId] = useState<string | null>(null);
+  const [isDeletingGameId, setIsDeletingGameId] = useState<string | null>(null);
   const pendingRestoreRoundRef = useRef<Round | null>(null);
   const longPressTimer = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
@@ -279,6 +283,12 @@ function App() {
 
     return () => window.clearTimeout(timeout);
   }, [statusToast]);
+
+  useEffect(() => {
+    if (screen === 'summary') {
+      setSummaryRevealCount(0);
+    }
+  }, [screen, game?.startedAt]);
 
   const togglePlayer = (playerName: string) => {
     setSelectedPlayers((current) =>
@@ -823,6 +833,42 @@ function App() {
     }
   };
 
+  const handleDeleteHistoryGame = async (gameId: string, status: 'complete' | 'incomplete') => {
+    const confirmKey = `${status}:${gameId}`;
+    if (confirmDeleteGameId !== confirmKey) {
+      setConfirmDeleteGameId(confirmKey);
+      return;
+    }
+
+    setIsDeletingGameId(confirmKey);
+    setSaveError(null);
+
+    try {
+      if (status === 'incomplete') {
+        await deleteIncompleteGame(gameId);
+      } else {
+        await deleteSavedGame(gameId);
+      }
+
+      const [gameRows, incompleteRows, leaderboardRows] = await Promise.all([
+        fetchGames(),
+        fetchIncompleteGames(),
+        fetchLeaderboard(),
+      ]);
+
+      setGames(gameRows);
+      setIncompleteGames(incompleteRows);
+      setLeaderboard(leaderboardRows);
+      setStatusToast('Game deleted.');
+      setConfirmDeleteGameId(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to delete game.';
+      setSaveError(message);
+    } finally {
+      setIsDeletingGameId(null);
+    }
+  };
+
   const renderSetup = () => (
     <main className="app-shell setup-screen">
       <div className="panel">
@@ -1049,59 +1095,60 @@ function App() {
             })}
           </div>
 
-          {bidMenuCell && currentRoundTemplate && (
-            <div className="cell-modal-overlay" onClick={() => setBidMenuCell(null)}>
-              <div className="cell-modal" onClick={(e) => e.stopPropagation()}>
-                <p className="cell-modal-title">Select bid (0–{currentRoundTemplate.cardCount})</p>
-                <div className="bid-menu">
-                  {getAllowedBidOptions(bidMenuCell).map(
-                    (bidOption) => (
-                      <button
-                        key={bidOption}
-                        type="button"
-                        className="bid-option"
-                        onClick={() => handleBidSelect(bidMenuCell, bidOption)}
-                      >
-                        {bidOption}
-                      </button>
-                    ),
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {tricksInputCell && currentRoundTemplate && (
-            <div className="cell-modal-overlay" onClick={() => setTricksInputCell(null)}>
-              <div className="cell-modal tricks-modal" onClick={(e) => e.stopPropagation()}>
-                <p className="cell-modal-title">Enter tricks won (0–{currentRoundTemplate.cardCount})</p>
-                <div className="tricks-input-group">
-                  <input
-                    type="number"
-                    min={0}
-                    max={currentRoundTemplate.cardCount}
-                    inputMode="numeric"
-                    value={tricksInputValue}
-                    onChange={(e) => setTricksInputValue(e.target.value)}
-                    autoFocus
-                  />
-                  <button
-                    type="button"
-                    className="primary-button"
-                    onClick={() => {
-                      const val = Number.parseInt(tricksInputValue, 10);
-                      if (Number.isFinite(val)) {
-                        handleTricksSubmit(tricksInputCell, val);
-                      }
-                    }}
-                  >
-                    Confirm
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
+
+        {bidMenuCell && currentRoundTemplate && (
+          <div className="cell-modal-overlay" onClick={() => setBidMenuCell(null)}>
+            <div className="cell-modal" onClick={(e) => e.stopPropagation()}>
+              <p className="cell-modal-title">Select bid (0–{currentRoundTemplate.cardCount})</p>
+              <div className="bid-menu">
+                {getAllowedBidOptions(bidMenuCell).map(
+                  (bidOption) => (
+                    <button
+                      key={bidOption}
+                      type="button"
+                      className="bid-option"
+                      onClick={() => handleBidSelect(bidMenuCell, bidOption)}
+                    >
+                      {bidOption}
+                    </button>
+                  ),
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tricksInputCell && currentRoundTemplate && (
+          <div className="cell-modal-overlay" onClick={() => setTricksInputCell(null)}>
+            <div className="cell-modal tricks-modal" onClick={(e) => e.stopPropagation()}>
+              <p className="cell-modal-title">Enter tricks won (0–{currentRoundTemplate.cardCount})</p>
+              <div className="tricks-input-group">
+                <input
+                  type="number"
+                  min={0}
+                  max={currentRoundTemplate.cardCount}
+                  inputMode="numeric"
+                  value={tricksInputValue}
+                  onChange={(e) => setTricksInputValue(e.target.value)}
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => {
+                    const val = Number.parseInt(tricksInputValue, 10);
+                    if (Number.isFinite(val)) {
+                      handleTricksSubmit(tricksInputCell, val);
+                    }
+                  }}
+                >
+                  Confirm
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     );
   };
@@ -1110,6 +1157,38 @@ function App() {
     if (!game) {
       return null;
     }
+
+    const rankedPlayers = [...game.playerIds]
+      .map((playerId) => ({
+        playerId,
+        name: playerNameById[playerId] ?? playerId,
+        score: totals[playerId] ?? 0,
+      }))
+      .sort((a, b) => b.score - a.score);
+
+    const topThree = rankedPlayers.slice(0, 3);
+    const remainingPlayers = rankedPlayers.slice(3);
+
+    const podiumByPosition = {
+      first: topThree[0] ?? null,
+      second: topThree[1] ?? null,
+      third: topThree[2] ?? null,
+    };
+
+    const getRevealLabel = (index: number, entry: { name: string; score: number } | null) => {
+      if (!entry) {
+        return '-';
+      }
+
+      if (index < summaryRevealCount) {
+        return `${entry.name} • ${entry.score}`;
+      }
+
+      return 'Tap reveal';
+    };
+
+    const totalPlacements = rankedPlayers.length;
+    const allRevealed = summaryRevealCount >= totalPlacements;
 
     return (
       <main className="app-shell scoreboard-screen">
@@ -1130,16 +1209,47 @@ function App() {
             <span>Rounds: {game.rounds.length}</span>
           </div>
 
-          <div className="score-grid">
-            {game.playerIds.map((playerId) => (
-              <div key={playerId} className="score-card">
-                <h2>{playerNameById[playerId] ?? playerId}</h2>
-                <strong>{totals[playerId] ?? 0}</strong>
-              </div>
-            ))}
+          <div className="reveal-controls">
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => setSummaryRevealCount((current) => Math.min(totalPlacements, current + 1))}
+              disabled={allRevealed}
+            >
+              {allRevealed ? 'All players revealed' : 'Tap to reveal player'}
+            </button>
           </div>
 
-          {winner ? <p className="winner-banner">Winner: {playerNameById[winner] ?? winner}</p> : null}
+          <div className="podium-wrap">
+            <div className="podium-slot second">
+              <p>2nd</p>
+              <div className="podium-card">{getRevealLabel(1, podiumByPosition.second)}</div>
+            </div>
+            <div className="podium-slot first">
+              <p>1st</p>
+              <div className="podium-card">{getRevealLabel(0, podiumByPosition.first)}</div>
+            </div>
+            <div className="podium-slot third">
+              <p>3rd</p>
+              <div className="podium-card">{getRevealLabel(2, podiumByPosition.third)}</div>
+            </div>
+          </div>
+
+          {remainingPlayers.length > 0 ? (
+            <div className="placement-list">
+              {remainingPlayers.map((entry, index) => {
+                const absoluteIndex = index + 3;
+                return (
+                  <div key={entry.playerId} className="placement-row">
+                    <span>{absoluteIndex + 1}th</span>
+                    <strong>{getRevealLabel(absoluteIndex, entry)}</strong>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {winner && summaryRevealCount > 0 ? <p className="winner-banner">Winner: {playerNameById[winner] ?? winner}</p> : null}
 
           <div className="save-box">
             {saveError ? <p className="save-error">{saveError}</p> : null}
@@ -1348,6 +1458,19 @@ function App() {
                               Resume
                             </button>
                           ) : null}
+
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => void handleDeleteHistoryGame(row.id, row.status)}
+                            disabled={isDeletingGameId === `${row.status}:${row.id}`}
+                          >
+                            {isDeletingGameId === `${row.status}:${row.id}`
+                              ? 'Deleting...'
+                              : confirmDeleteGameId === `${row.status}:${row.id}`
+                                ? 'Confirm delete'
+                                : 'Delete'}
+                          </button>
                         </div>
                       </div>
                     </div>

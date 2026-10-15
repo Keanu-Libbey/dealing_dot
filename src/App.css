@@ -368,6 +368,9 @@ h2 {
 .score-table-header {
   font-weight: 700;
   color: #334155;
+  position: sticky;
+  top: max(8px, env(safe-area-inset-top));
+  z-index: 30;
 }
 
 .score-table-corner,
@@ -390,6 +393,7 @@ h2 {
   padding: 6px 8px;
   font-size: 0.78rem;
   letter-spacing: 0.01em;
+  background: #f1f5f9;
 }
 
 .score-table-dealer {
@@ -559,14 +563,12 @@ h2 {
 
 .cell-modal-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  place-items: center;
+  padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
+  overflow: auto;
   z-index: 1000;
 }
 
@@ -579,6 +581,67 @@ h2 {
   width: 90vw;
   max-height: 80vh;
   overflow-y: auto;
+  margin: auto;
+}
+
+.reveal-controls {
+  margin-bottom: 14px;
+}
+
+.podium-wrap {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 14px;
+}
+
+.podium-slot {
+  display: grid;
+  gap: 6px;
+}
+
+.podium-slot p {
+  margin: 0;
+  text-align: center;
+  color: #475569;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.podium-card {
+  border: 1px solid #dbe4f0;
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 12px 10px;
+  text-align: center;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.podium-slot.first .podium-card {
+  min-height: 88px;
+}
+
+.podium-slot.second .podium-card,
+.podium-slot.third .podium-card {
+  min-height: 72px;
+}
+
+.placement-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.placement-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #dbe4f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  padding: 10px 12px;
 }
 
 .cell-modal-title {

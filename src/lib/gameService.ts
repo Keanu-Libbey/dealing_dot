@@ -203,6 +203,20 @@ export async function clearSeasonData(): Promise<void> {
   }
 }
 
+export async function deleteSavedGame(gameId: string): Promise<void> {
+  if (!hasSupabaseConfig || !supabase) {
+    throw new Error('Supabase is not configured yet. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to continue.');
+  }
+
+  const { error } = await supabase.rpc('delete_game_record', {
+    p_game_id: gameId,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
 export async function saveGame(
   playedAt: string,
   playerScores: Array<{ player_id: string; score: number }>,

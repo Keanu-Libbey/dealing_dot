@@ -350,7 +350,8 @@ h2 {
 .score-table {
   display: grid;
   gap: 8px;
-  overflow-x: auto;
+  overflow: auto;
+  max-height: 72vh;
   margin-bottom: 20px;
   padding: 8px;
   border: 1px solid #dbe4f0;
@@ -369,8 +370,9 @@ h2 {
   font-weight: 700;
   color: #334155;
   position: sticky;
-  top: max(8px, env(safe-area-inset-top));
+  top: 0;
   z-index: 30;
+  background: rgba(241, 245, 249, 0.98);
 }
 
 .score-table-corner,
@@ -691,7 +693,10 @@ h2 {
   border-radius: 8px;
   padding: 12px;
   font-size: 1rem;
-  color: #0f172a;
+  color: #0f172a !important;
+  background: #ffffff !important;
+  -webkit-text-fill-color: #0f172a !important;
+  caret-color: #0f172a;
 }
 
 .tricks-input-group .primary-button {

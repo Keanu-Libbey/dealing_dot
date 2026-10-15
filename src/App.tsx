@@ -1180,7 +1180,7 @@ function App() {
         return '-';
       }
 
-      if (index < summaryRevealCount) {
+      if (index >= totalPlacements - summaryRevealCount) {
         return `${entry.name} • ${entry.score}`;
       }
 
@@ -1249,7 +1249,7 @@ function App() {
             </div>
           ) : null}
 
-          {winner && summaryRevealCount > 0 ? <p className="winner-banner">Winner: {playerNameById[winner] ?? winner}</p> : null}
+          {winner && (0 >= totalPlacements - summaryRevealCount) ? <p className="winner-banner">Winner: {playerNameById[winner] ?? winner}</p> : null}
 
           <div className="save-box">
             {saveError ? <p className="save-error">{saveError}</p> : null}
